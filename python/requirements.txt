@@ -1,0 +1,7 @@
+openai
+
+# Только для голосового режима (--voice), на сервере не нужны:
+# SpeechRecognition
+# pyaudio
+# pyttsx3
+# pyserial
