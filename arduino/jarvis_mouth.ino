@@ -11,134 +11,95 @@ const int ECHO_PIN = 6;
 
 // === НАСТРОЙКИ ===
 const int    WAKE_DISTANCE_CM = 100;
-const unsigned long SLEEP_DELAY      = 10000; // 10 сек перед сном
-const unsigned long MEASURE_INTERVAL = 200;   // замер каждые 200 мс
-const unsigned long TALK_FRAME_MS    = 130;   // скорость анимации разговора
-const unsigned long LISTEN_FRAME_MS  = 350;   // скорость анимации "слушаю"
+const unsigned long SLEEP_DELAY      = 10000;
+const unsigned long MEASURE_INTERVAL = 200;
+const unsigned long TALK_FRAME_MS    = 150;
+const unsigned long LISTEN_FRAME_MS  = 400;
 
-// === КАСТОМНЫЕ СИМВОЛЫ (5x8 пикселей) ===
-// Рот собирается из 2 символов рядом (col 7 и col 8, row 1)
-// Левая половина — char 0, правая — char 1
+// === КАСТОМНЫЕ СИМВОЛЫ (5x8) ===
+// Загружаются один раз в setup() — слоты 0..7
+// Рот = 2 символа рядом: левый (чётный слот) + правый (нечётный слот)
+//
+// Слот 0-1: рот закрыт
+// Слот 2-3: рот средне открыт
+// Слот 4-5: рот широко открыт
+// Слот 6-7: анимация "слушаю"
 
-// M0: закрытый рот — горизонтальная линия
-byte CLOSED_L[8] = {
+byte C0[8] = { // закрыт — левая
   0b00000, 0b00000, 0b00000, 0b11111, 0b00000, 0b00000, 0b00000, 0b00000
 };
-byte CLOSED_R[8] = {
+byte C1[8] = { // закрыт — правая
   0b00000, 0b00000, 0b00000, 0b11111, 0b00000, 0b00000, 0b00000, 0b00000
 };
-
-// M1: слегка приоткрыт
-byte SMALL_L[8] = {
-  0b00000, 0b00000, 0b01111, 0b10000, 0b01111, 0b00000, 0b00000, 0b00000
-};
-byte SMALL_R[8] = {
-  0b00000, 0b00000, 0b11110, 0b00001, 0b11110, 0b00000, 0b00000, 0b00000
-};
-
-// M2: средне открыт
-byte MEDIUM_L[8] = {
+byte C2[8] = { // средне — левая
   0b00000, 0b01111, 0b10000, 0b10000, 0b10000, 0b01111, 0b00000, 0b00000
 };
-byte MEDIUM_R[8] = {
+byte C3[8] = { // средне — правая
   0b00000, 0b11110, 0b00001, 0b00001, 0b00001, 0b11110, 0b00000, 0b00000
 };
-
-// M3: широко открыт
-byte WIDE_L[8] = {
+byte C4[8] = { // широко — левая
   0b00111, 0b01000, 0b10000, 0b10000, 0b10000, 0b10000, 0b01000, 0b00111
 };
-byte WIDE_R[8] = {
+byte C5[8] = { // широко — правая
   0b11100, 0b00010, 0b00001, 0b00001, 0b00001, 0b00001, 0b00010, 0b11100
 };
-
-// M4: очень широко (с зубами)
-byte FULL_L[8] = {
-  0b00111, 0b01000, 0b10101, 0b10000, 0b10000, 0b10000, 0b01000, 0b00111
-};
-byte FULL_R[8] = {
-  0b11100, 0b00010, 0b10101, 0b00001, 0b00001, 0b00001, 0b00010, 0b11100
-};
-
-// L: слушаю — "волна" (3 кадра, только левый символ меняется)
-byte LISTEN_A_L[8] = { // маленький пульс
+byte C6[8] = { // слушаю — малый пульс — левая
   0b00000, 0b00000, 0b00100, 0b01110, 0b00100, 0b00000, 0b00000, 0b00000
 };
-byte LISTEN_A_R[8] = {
+byte C7[8] = { // слушаю — малый пульс — правая
   0b00000, 0b00000, 0b00100, 0b01110, 0b00100, 0b00000, 0b00000, 0b00000
 };
-byte LISTEN_B_L[8] = { // средний пульс
-  0b00000, 0b00100, 0b01110, 0b11111, 0b01110, 0b00100, 0b00000, 0b00000
-};
-byte LISTEN_B_R[8] = {
-  0b00000, 0b00100, 0b01110, 0b11111, 0b01110, 0b00100, 0b00000, 0b00000
-};
 
-// === ПОСЛЕДОВАТЕЛЬНОСТИ АНИМАЦИЙ ===
-// Разговор: чередуем M0→M1→M2→M3→M2→M1→M0→...
-const int TALK_SEQ[]  = {0, 1, 2, 3, 4, 3, 2, 1};
-const int TALK_LEN    = 8;
+// === КАДРЫ АНИМАЦИИ ===
+// Каждый кадр = пара слотов: {левый, правый}
+// Разговор: закрыт → средне → широко → средне → закрыт → ...
+const byte TALK_L[] = {0, 2, 4, 2, 0};
+const byte TALK_R[] = {1, 3, 5, 3, 1};
+const int  TALK_LEN = 5;
 
-// Слушаю: A→B→A→B→...
-const int LISTEN_SEQ[] = {5, 6};
-const int LISTEN_LEN   = 2;
+// Слушаю: {закрыт, пульс, закрыт, пульс, ...}
+const byte LISTEN_L[] = {0, 6};
+const byte LISTEN_R[] = {1, 7};
+const int  LISTEN_LEN = 2;
 
-// === СОСТОЯНИЯ ===
-enum State { STATE_SLEEP, STATE_IDLE, STATE_LISTENING, STATE_TALKING };
-State currentState = STATE_SLEEP;
-
-bool animating  = false;
-bool listening  = false;
-int  animFrame  = 0;
+// === СОСТОЯНИЕ ===
+bool animating = false;
+bool listening = false;
+int  animFrame = 0;
 unsigned long lastAnimTime    = 0;
 unsigned long lastMeasureTime = 0;
 unsigned long lastFarTime     = 0;
-bool wakeSent   = false;
-bool sleepSent  = true;
+bool wakeSent  = false;
+bool sleepSent = true;
 String inputBuffer = "";
 
 // === ФУНКЦИИ ===
 
-// Загрузить символы в LCD-CGRAM и нарисовать рот
-void setMouth(byte* leftChar, byte* rightChar) {
-  lcd.createChar(0, leftChar);
-  lcd.createChar(1, rightChar);
+void drawMouth(byte slotL, byte slotR) {
   lcd.setCursor(7, 1);
-  lcd.write(byte(0));
-  lcd.write(byte(1));
-}
-
-void showFrame(int frameIndex) {
-  switch (frameIndex) {
-    case 0: setMouth(CLOSED_L,   CLOSED_R);  break;
-    case 1: setMouth(SMALL_L,    SMALL_R);   break;
-    case 2: setMouth(MEDIUM_L,   MEDIUM_R);  break;
-    case 3: setMouth(WIDE_L,     WIDE_R);    break;
-    case 4: setMouth(FULL_L,     FULL_R);    break;
-    case 5: setMouth(LISTEN_A_L, LISTEN_A_R);break;
-    case 6: setMouth(LISTEN_B_L, LISTEN_B_R);break;
-  }
+  lcd.write(slotL);
+  lcd.write(slotR);
 }
 
 void setStatus(const char* text) {
   lcd.setCursor(0, 0);
-  lcd.print("                "); // очистить строку
+  lcd.print("                ");
   lcd.setCursor(0, 0);
   lcd.print(text);
 }
 
 void showSleep() {
-  lcd.clear();
-  lcd.setCursor(5, 0);
-  lcd.print("zzZ...");
-  lcd.setCursor(7, 1);
-  lcd.print(" ~_~");
+  lcd.setCursor(0, 0);
+  lcd.print("     zzZ...     ");
+  lcd.setCursor(0, 1);
+  lcd.print("      ~_~       ");
 }
 
 void showIdle() {
-  lcd.clear();
   setStatus("    [ JARVIS ]  ");
-  showFrame(0); // закрытый рот
+  lcd.setCursor(0, 1);
+  lcd.print("                ");
+  drawMouth(0, 1);
 }
 
 long measureDistance() {
@@ -156,45 +117,40 @@ void processCommand(String cmd) {
 
   if (cmd == "M0") {
     animating = false; listening = false;
-    showFrame(0);
+    drawMouth(0, 1);
   } else if (cmd == "M1") {
     animating = false; listening = false;
-    showFrame(1);
+    drawMouth(0, 1); // слегка = закрытый (нет отдельного слота)
   } else if (cmd == "M2") {
     animating = false; listening = false;
-    showFrame(2);
-  } else if (cmd == "M3") {
+    drawMouth(2, 3);
+  } else if (cmd == "M3" || cmd == "M4") {
     animating = false; listening = false;
-    showFrame(3);
-  } else if (cmd == "M4") {
-    animating = false; listening = false;
-    showFrame(4);
+    drawMouth(4, 5);
   } else if (cmd == "L1") {
     animating = false;
     listening = true;
     animFrame = 0;
     lastAnimTime = millis();
-    setStatus("   [ LISTENING ]");
-    currentState = STATE_LISTENING;
+    setStatus("  [ LISTENING ] ");
+    lcd.setCursor(0, 1);
+    lcd.print("                ");
   } else if (cmd == "A1") {
     listening = false;
     animating = true;
     animFrame = 0;
     lastAnimTime = millis();
-    setStatus("   [ SPEAKING ] ");
-    currentState = STATE_TALKING;
+    setStatus("  [ SPEAKING ]  ");
+    lcd.setCursor(0, 1);
+    lcd.print("                ");
   } else if (cmd == "A0") {
     animating = false; listening = false;
-    setStatus("    [ JARVIS ]  ");
-    showFrame(0);
-    currentState = STATE_IDLE;
+    showIdle();
   } else if (cmd == "S1") {
     animating = false; listening = false;
     showSleep();
-    currentState = STATE_SLEEP;
   } else if (cmd == "S0") {
     showIdle();
-    currentState = STATE_IDLE;
   }
 }
 
@@ -204,11 +160,20 @@ void setup() {
   lcd.init();
   lcd.backlight();
 
+  // Загружаем все 8 кастомных символов ОДИН РАЗ
+  lcd.createChar(0, C0);
+  lcd.createChar(1, C1);
+  lcd.createChar(2, C2);
+  lcd.createChar(3, C3);
+  lcd.createChar(4, C4);
+  lcd.createChar(5, C5);
+  lcd.createChar(6, C6);
+  lcd.createChar(7, C7);
+
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
 
   showSleep();
-  currentState = STATE_SLEEP;
   lastFarTime = millis();
 }
 
@@ -221,7 +186,7 @@ void loop() {
     if (c == '\n') {
       processCommand(inputBuffer);
       inputBuffer = "";
-    } else {
+    } else if (c != '\r') {
       inputBuffer += c;
     }
   }
@@ -237,8 +202,7 @@ void loop() {
         Serial.println("WAKE");
         wakeSent  = true;
         sleepSent = false;
-        if (currentState == STATE_SLEEP) showIdle();
-        currentState = STATE_IDLE;
+        showIdle();
       }
     } else {
       if (wakeSent && !sleepSent && (now - lastFarTime >= SLEEP_DELAY)) {
@@ -248,7 +212,6 @@ void loop() {
         animating = false;
         listening = false;
         showSleep();
-        currentState = STATE_SLEEP;
       }
     }
   }
@@ -256,14 +219,14 @@ void loop() {
   // --- Анимация разговора ---
   if (animating && (now - lastAnimTime >= TALK_FRAME_MS)) {
     lastAnimTime = now;
-    showFrame(TALK_SEQ[animFrame]);
+    drawMouth(TALK_L[animFrame], TALK_R[animFrame]);
     animFrame = (animFrame + 1) % TALK_LEN;
   }
 
   // --- Анимация "слушаю" ---
   if (listening && (now - lastAnimTime >= LISTEN_FRAME_MS)) {
     lastAnimTime = now;
-    showFrame(LISTEN_SEQ[animFrame]);
+    drawMouth(LISTEN_L[animFrame], LISTEN_R[animFrame]);
     animFrame = (animFrame + 1) % LISTEN_LEN;
   }
 }
