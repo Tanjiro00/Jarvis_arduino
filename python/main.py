@@ -18,7 +18,7 @@ from ai import JarvisAI
 def run_text_mode():
     """Текстовый режим — для тестирования на сервере."""
     print("=" * 50)
-    print("  ДЖАРВИС — ИИ-ассистент (текстовый режим)")
+    print("  J.O.P.A. — ИИ-ассистент (текстовый режим)")
     print("=" * 50)
     print("  Пиши сообщения. 'выход' — завершить.\n")
 
@@ -34,11 +34,11 @@ def run_text_mode():
             continue
 
         if text.lower() in ("выход", "exit", "quit", "стоп"):
-            print("\n[Джарвис] До свидания!")
+            print("\n[JOPA] До свидания!")
             break
 
         answer = ai.ask(text)
-        print(f"\nДжарвис: {answer}\n")
+        print(f"\nJOPA: {answer}\n")
 
 
 def run_voice_mode(port=None):
@@ -48,7 +48,7 @@ def run_voice_mode(port=None):
     from tts import TextToSpeech
 
     print("=" * 50)
-    print("  ДЖАРВИС — ИИ-ассистент (голосовой режим)")
+    print("  J.O.P.A. — ИИ-ассистент (голосовой режим)")
     print("=" * 50)
 
     # --- Инициализация ---
@@ -70,11 +70,11 @@ def run_voice_mode(port=None):
     recognizer.calibrate(duration=1)
 
     # --- Приветствие ---
-    print("\n[Джарвис] Система готова. Говори!\n")
+    print("\n[JOPA] Система готова. Говори!\n")
     if arduino.connected:
-        time.sleep(0.5)  # дождаться boot-анимации Arduino
+        time.sleep(0.5)
         arduino.start_talking_animation()
-    tts.speak("Джарвис онлайн. Чем могу помочь?")
+    tts.speak("JOPA онлайн. Чем могу помочь?")
     if arduino.connected:
         arduino.stop_animation()
 
@@ -120,14 +120,14 @@ def run_voice_mode(port=None):
                 arduino.mouth_closed()
 
     except KeyboardInterrupt:
-        print("\n\n[Джарвис] Выключаюсь...")
+        print("\n\n[JOPA] Выключаюсь...")
     finally:
         if arduino.connected:
             arduino.stop_animation()
             arduino.sleep_mode()
             time.sleep(0.3)
             arduino.close()
-        print("[Джарвис] До свидания!")
+        print("[JOPA] До свидания!")
 
 
 def main():
