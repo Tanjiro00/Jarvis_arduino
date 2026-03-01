@@ -6,112 +6,123 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 // === HC-SR04 ===
 const int TRIG_PIN = 7;
 const int ECHO_PIN = 6;
-const int WAKE_DIST = 80;            // см
+const int WAKE_DIST = 80;
 const unsigned long SLEEP_TIMEOUT = 12000;
 const unsigned long MEASURE_MS    = 250;
 
-// === ТАЙМИНГИ АНИМАЦИИ ===
+// === ТАЙМИНГИ ===
 const unsigned long TALK_MS   = 100;
 const unsigned long LISTEN_MS = 500;
-const unsigned long BLINK_INTERVAL_MIN = 3000;
-const unsigned long BLINK_INTERVAL_MAX = 7000;
-const unsigned long BLINK_DURATION     = 150;
+const unsigned long BLINK_MIN = 2500;
+const unsigned long BLINK_MAX = 6000;
+const unsigned long BLINK_DUR = 150;
 
 // =====================================================
-// КАСТОМНЫЕ СИМВОЛЫ — ЛИЦО
-// На 16x2 LCD: строка 0 = глаза, строка 1 = рот
-// Глаза: 2 символа (позиции 4-5 и 10-11)
-// Рот: 2 символа (позиции 7-8)
+// КАСТОМНЫЕ СИМВОЛЫ — АНИМЕ ЛИЦО
+//
+// Каждый глаз = 2 символа (10x8 пикселей)
+// Row 0: глаза на позициях 2-3 и 12-13
+// Row 1: рот на позиции 7 (один символ)
+//
+// Слоты:
+//   0 = глаз левая половина (открыт)
+//   1 = глаз правая половина (открыт)
+//   2 = глаз левая половина (закрыт)
+//   3 = глаз правая половина (закрыт)
+//   4 = рот: улыбка
+//   5 = рот: маленький "о"
+//   6 = рот: большой "О"
+//   7 = рот: точки (слушает)
 // =====================================================
 
-// --- ГЛАЗА ---
-// Слот 0: глаз открыт (левый и правый одинаковые)
-byte EYE_OPEN[8] = {
+// --- БОЛЬШИЕ АНИМЕ ГЛАЗА (10x8 на глаз) ---
+// Круглая форма, огромный зрачок, блик в верху
+
+byte EYE_OPEN_L[8] = {
+  0b00111, // ..###
+  0b01000, // .#...
+  0b10001, // #...#  <- блик (свободные пиксели = свет)
+  0b10011, // #..##
+  0b10111, // #.###
+  0b10011, // #..##
+  0b01000, // .#...
+  0b00111  // ..###
+};
+
+byte EYE_OPEN_R[8] = {
+  0b11100, // ###..
+  0b00010, // ...#.
+  0b00001, // ....#  <- блик справа
+  0b11001, // ##..#
+  0b11101, // ###.#
+  0b11001, // ##..#
+  0b00010, // ...#.
+  0b11100  // ###..
+};
+
+// Глаза закрыты — дуга (^_^)
+byte EYE_SHUT_L[8] = {
   0b00000,
-  0b01110,
-  0b10001,
-  0b10101,
-  0b10101,
-  0b10001,
-  0b01110,
+  0b00000,
+  0b00000,
+  0b00011,
+  0b00100,
+  0b01000,
+  0b00000,
   0b00000
 };
 
-// Слот 1: глаз закрыт (моргание)
-byte EYE_SHUT[8] = {
+byte EYE_SHUT_R[8] = {
   0b00000,
   0b00000,
   0b00000,
-  0b11111,
-  0b00000,
-  0b00000,
+  0b11000,
+  0b00100,
+  0b00010,
   0b00000,
   0b00000
 };
 
-// Слот 2: глаз — смотрит влево
-byte EYE_LEFT[8] = {
-  0b00000,
-  0b01110,
-  0b10001,
-  0b10100,
-  0b10100,
-  0b10001,
-  0b01110,
-  0b00000
-};
+// --- РОТ (одиночные символы) ---
 
-// Слот 3: глаз — смотрит вправо
-byte EYE_RIGHT[8] = {
-  0b00000,
-  0b01110,
-  0b10001,
-  0b00101,
-  0b00101,
-  0b10001,
-  0b01110,
-  0b00000
-};
-
-// --- РОТ ---
-// Слот 4: рот закрыт — улыбка
+// Улыбка :)
 byte MOUTH_SMILE[8] = {
   0b00000,
   0b00000,
+  0b00000,
+  0b10001,
   0b10001,
   0b01110,
-  0b00000,
-  0b00000,
   0b00000,
   0b00000
 };
 
-// Слот 5: рот приоткрыт — маленький "о"
+// Маленький "о"
 byte MOUTH_SM[8] = {
   0b00000,
   0b00000,
   0b01110,
   0b10001,
+  0b10001,
   0b01110,
-  0b00000,
   0b00000,
   0b00000
 };
 
-// Слот 6: рот широко — большой "О"
+// Большой "О"
 byte MOUTH_BIG[8] = {
   0b00000,
   0b01110,
   0b10001,
   0b10001,
   0b10001,
+  0b10001,
   0b01110,
-  0b00000,
   0b00000
 };
 
-// Слот 7: рот — слушает (точки)
-byte MOUTH_LISTEN[8] = {
+// Точки "слушает"
+byte MOUTH_DOT[8] = {
   0b00000,
   0b00000,
   0b00000,
@@ -122,8 +133,24 @@ byte MOUTH_LISTEN[8] = {
   0b00000
 };
 
-// === АНИМАЦИЯ РАЗГОВОРА ===
-// Слоты рта: 4=smile, 5=small, 6=big
+// === ГЛАЗА: динамические (для взгляда) ===
+// Загружаются в слоты 0-1 когда нужно посмотреть в сторону
+
+byte EYE_LOOK_L_L[8] = { // смотрит влево — левая половина
+  0b00111, 0b01000, 0b10100, 0b10110, 0b10111, 0b10011, 0b01000, 0b00111
+};
+byte EYE_LOOK_L_R[8] = { // смотрит влево — правая половина
+  0b11100, 0b00010, 0b00001, 0b10001, 0b11101, 0b11001, 0b00010, 0b11100
+};
+
+byte EYE_LOOK_R_L[8] = { // смотрит вправо — левая половина
+  0b00111, 0b01000, 0b10001, 0b10001, 0b10111, 0b10011, 0b01000, 0b00111
+};
+byte EYE_LOOK_R_R[8] = { // смотрит вправо — правая половина
+  0b11100, 0b00010, 0b00101, 0b01101, 0b11101, 0b11001, 0b00010, 0b11100
+};
+
+// === РАЗГОВОР ===
 const byte TALK_MOUTH[] = {4, 5, 6, 5, 4, 5, 6, 6, 5, 4, 5, 6, 5, 4};
 const int  TALK_LEN     = 14;
 
@@ -138,7 +165,7 @@ unsigned long lastAnimTime = 0;
 
 // HC-SR04
 unsigned long lastMeasureTime = 0;
-unsigned long lastFarTime     = 0;
+unsigned long lastFarTime = 0;
 bool wakeSent  = false;
 bool sleepSent = true;
 
@@ -147,8 +174,12 @@ unsigned long nextBlinkTime = 0;
 bool blinking = false;
 unsigned long blinkStartTime = 0;
 
-// Listening dot animation
-int listenDotCount = 0;
+// Взгляд
+unsigned long nextLookTime = 0;
+bool looking = false;
+unsigned long lookStartTime = 0;
+
+int listenDotPhase = 0;
 
 String inputBuffer = "";
 
@@ -165,63 +196,82 @@ long measureDistance() {
 }
 
 void scheduleNextBlink() {
-  nextBlinkTime = millis() + random(BLINK_INTERVAL_MIN, BLINK_INTERVAL_MAX);
+  nextBlinkTime = millis() + random(BLINK_MIN, BLINK_MAX);
 }
 
-void drawEyes(byte charSlot) {
-  // Глаза на строке 0: позиции 3-4 и 11-12
-  lcd.setCursor(3, 0);
-  lcd.write(charSlot);
-  lcd.write(charSlot);
-  lcd.setCursor(11, 0);
-  lcd.write(charSlot);
-  lcd.write(charSlot);
+void scheduleNextLook() {
+  nextLookTime = millis() + random(5000, 12000);
 }
 
-void drawMouth(byte charSlot) {
-  // Рот на строке 1: позиции 7-8
+void loadDefaultEyes() {
+  lcd.createChar(0, EYE_OPEN_L);
+  lcd.createChar(1, EYE_OPEN_R);
+}
+
+void drawEyes(byte slotL, byte slotR) {
+  // Левый глаз: cols 2-3
+  lcd.setCursor(2, 0);
+  lcd.write(slotL);
+  lcd.write(slotR);
+  // Правый глаз: cols 12-13
+  lcd.setCursor(12, 0);
+  lcd.write(slotL);
+  lcd.write(slotR);
+}
+
+void drawMouth(byte slot) {
   lcd.setCursor(7, 1);
-  lcd.write(charSlot);
-  lcd.write(charSlot);
+  lcd.write(slot);
 }
 
 void drawFace() {
-  // Полное лицо: глаза + рот
   lcd.clear();
-  drawEyes(0);   // открытые глаза
-  drawMouth(4);   // улыбка
+  loadDefaultEyes();
+  drawEyes(0, 1);
+  drawMouth(4);  // улыбка
   scheduleNextBlink();
+  scheduleNextLook();
 }
 
 // === BOOT ===
 void bootAnimation() {
   lcd.clear();
   lcd.backlight();
-
-  // Фаза 1: глаза "просыпаются" — от закрытых к открытым
-  drawEyes(1);  // закрытые
-  delay(400);
-  drawEyes(0);  // открытые
-  delay(200);
-  drawEyes(1);  // моргнули
-  delay(150);
-  drawEyes(0);  // открыли
   delay(300);
 
-  // Фаза 2: улыбка появляется
-  drawMouth(4);
+  // Глаза появляются: сначала закрытые
+  drawEyes(2, 3);
   delay(500);
 
-  // Фаза 3: бегущая строка имени внизу
-  const char* name = " ZHOPA ONLINE ";
-  for (int i = 0; i < 14; i++) {
-    lcd.setCursor(1 + i, 1);
-    lcd.print(name[i]);
-    delay(50);
-  }
-  delay(800);
+  // Открываются
+  loadDefaultEyes();
+  drawEyes(0, 1);
+  delay(200);
 
-  // Убираем текст, оставляем лицо
+  // Быстрое моргание (проснулись)
+  drawEyes(2, 3);
+  delay(100);
+  drawEyes(0, 1);
+  delay(150);
+  drawEyes(2, 3);
+  delay(100);
+  drawEyes(0, 1);
+  delay(400);
+
+  // Улыбка
+  drawMouth(4);
+  delay(300);
+
+  // Имя бегущей строкой внизу
+  const char* name = "  ZHOPA ONLINE  ";
+  for (int i = 0; i < 16; i++) {
+    lcd.setCursor(i, 1);
+    lcd.print(name[i]);
+    delay(40);
+  }
+  delay(900);
+
+  // Переход к нормальному лицу
   drawFace();
 }
 
@@ -229,11 +279,13 @@ void bootAnimation() {
 
 void showSleep() {
   lcd.clear();
-  // Спящее лицо: закрытые глаза + Z
-  drawEyes(1);
-  lcd.setCursor(7, 1);
-  lcd.print("zZ");
+  // Спящее лицо: закрытые глаза + zzZ
+  drawEyes(2, 3);
+  lcd.setCursor(6, 1);
+  lcd.print("z Z z");
+  delay(300);
   lcd.noBacklight();
+  currentState = STATE_SLEEP;
 }
 
 void showIdle() {
@@ -243,17 +295,18 @@ void showIdle() {
 }
 
 void showListening() {
-  // Глаза широко + рот "слушает"
-  drawEyes(0);
+  loadDefaultEyes();
+  drawEyes(0, 1);
   lcd.setCursor(0, 1);
   lcd.print("                ");
-  drawMouth(7);  // точки
-  listenDotCount = 0;
+  drawMouth(7);
+  listenDotPhase = 0;
   currentState = STATE_LISTENING;
 }
 
 void showSpeaking() {
-  drawEyes(0);
+  loadDefaultEyes();
+  drawEyes(0, 1);
   currentState = STATE_TALKING;
 }
 
@@ -263,7 +316,7 @@ void processCommand(String cmd) {
 
   if (cmd == "M0") {
     animating = false; listening = false;
-    drawMouth(4);  // улыбка
+    drawMouth(4);
   } else if (cmd == "M1") {
     animating = false; listening = false;
     drawMouth(5);
@@ -289,16 +342,15 @@ void processCommand(String cmd) {
   } else if (cmd == "S1") {
     animating = false;
     listening = false;
-    // Засыпание: глаза закрываются
+    // Засыпание: глаза медленно закрываются
     drawMouth(4);
-    delay(200);
-    drawEyes(1);  // закрыли глаза
-    delay(400);
+    delay(300);
+    drawEyes(2, 3);
+    delay(500);
     showSleep();
-    currentState = STATE_SLEEP;
   } else if (cmd == "S0") {
+    lcd.backlight();
     bootAnimation();
-    showIdle();
   }
 }
 
@@ -310,14 +362,14 @@ void setup() {
   lcd.init();
   lcd.backlight();
 
-  lcd.createChar(0, EYE_OPEN);
-  lcd.createChar(1, EYE_SHUT);
-  lcd.createChar(2, EYE_LEFT);
-  lcd.createChar(3, EYE_RIGHT);
+  lcd.createChar(0, EYE_OPEN_L);
+  lcd.createChar(1, EYE_OPEN_R);
+  lcd.createChar(2, EYE_SHUT_L);
+  lcd.createChar(3, EYE_SHUT_R);
   lcd.createChar(4, MOUTH_SMILE);
   lcd.createChar(5, MOUTH_SM);
   lcd.createChar(6, MOUTH_BIG);
-  lcd.createChar(7, MOUTH_LISTEN);
+  lcd.createChar(7, MOUTH_DOT);
 
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
@@ -350,60 +402,63 @@ void loop() {
       lastFarTime = now;
       if (!wakeSent) {
         Serial.println("WAKE");
-        wakeSent  = true;
+        wakeSent = true;
         sleepSent = false;
         if (currentState == STATE_SLEEP) {
+          lcd.backlight();
           bootAnimation();
-          showIdle();
         }
       }
     } else {
       if (wakeSent && !sleepSent && (now - lastFarTime >= SLEEP_TIMEOUT)) {
         Serial.println("SLEEP");
         sleepSent = true;
-        wakeSent  = false;
+        wakeSent = false;
         animating = false;
         listening = false;
-        // Засыпание
-        drawEyes(1);
-        delay(300);
+        drawEyes(2, 3);
+        delay(400);
         showSleep();
-        currentState = STATE_SLEEP;
       }
     }
   }
 
-  // --- МОРГАНИЕ (idle и talking) ---
-  if ((currentState == STATE_IDLE || currentState == STATE_TALKING) && !blinking) {
+  // --- МОРГАНИЕ ---
+  if ((currentState == STATE_IDLE || currentState == STATE_TALKING) && !blinking && !looking) {
     if (now >= nextBlinkTime) {
       blinking = true;
       blinkStartTime = now;
-      drawEyes(1);  // закрыть
+      drawEyes(2, 3);
     }
   }
-  if (blinking && (now - blinkStartTime >= BLINK_DURATION)) {
+  if (blinking && (now - blinkStartTime >= BLINK_DUR)) {
     blinking = false;
-    drawEyes(0);  // открыть
+    loadDefaultEyes();
+    drawEyes(0, 1);
     scheduleNextBlink();
   }
 
-  // --- IDLE: случайный взгляд ---
-  if (currentState == STATE_IDLE && !blinking) {
-    // Иногда смотрит влево/вправо
-    static unsigned long lastLookTime = 0;
-    static bool looking = false;
-    if (!looking && (now - lastLookTime > random(5000, 10000))) {
+  // --- ВЗГЛЯД В СТОРОНЫ (только idle) ---
+  if (currentState == STATE_IDLE && !blinking && !looking) {
+    if (now >= nextLookTime) {
       looking = true;
-      lastLookTime = now;
-      byte dir = random(0, 3); // 0=лево, 1=право, 2=прямо
-      if (dir == 0) drawEyes(2);
-      else if (dir == 1) drawEyes(3);
+      lookStartTime = now;
+      byte dir = random(0, 2);
+      if (dir == 0) {
+        lcd.createChar(0, EYE_LOOK_L_L);
+        lcd.createChar(1, EYE_LOOK_L_R);
+      } else {
+        lcd.createChar(0, EYE_LOOK_R_L);
+        lcd.createChar(1, EYE_LOOK_R_R);
+      }
+      drawEyes(0, 1);
     }
-    if (looking && (now - lastLookTime > 800)) {
-      looking = false;
-      drawEyes(0);  // назад прямо
-      lastLookTime = now;
-    }
+  }
+  if (looking && (now - lookStartTime >= 700)) {
+    looking = false;
+    loadDefaultEyes();
+    drawEyes(0, 1);
+    scheduleNextLook();
   }
 
   // --- РАЗГОВОР ---
@@ -417,13 +472,12 @@ void loop() {
   if (listening && (now - lastAnimTime >= LISTEN_MS)) {
     lastAnimTime = now;
     lcd.setCursor(5, 1);
-    // Точки появляются и исчезают
-    listenDotCount = (listenDotCount + 1) % 4;
-    lcd.print("      ");  // очистить
+    lcd.print("      ");
     lcd.setCursor(5, 1);
-    for (int i = 0; i < listenDotCount + 1; i++) {
+    listenDotPhase = (listenDotPhase + 1) % 4;
+    for (int i = 0; i <= listenDotPhase; i++) {
       lcd.write(byte(7));
-      lcd.print(" ");
+      if (i < listenDotPhase) lcd.print(" ");
     }
   }
 }
