@@ -1,31 +1,31 @@
-"""Модуль распознавания речи — OpenAI Whisper (точное распознавание)."""
+"""Модуль распознавания речи — OpenAI Whisper с адаптивным определением тишины."""
 
-import io
 import os
-import wave
+import struct
 import tempfile
+import time
+import wave
 
 import pyaudio
 from openai import OpenAI
+
+import config
 
 
 class SpeechRecognizer:
     """Запись с микрофона + распознавание через OpenAI Whisper API."""
 
-    def __init__(self, language="ru", api_key=None):
-        self.client = OpenAI(api_key=api_key or os.environ.get("OPENAI_API_KEY"))
+    def __init__(self, client=None, language="ru"):
+        self.client = client or OpenAI(api_key=config.OPENAI_API_KEY)
         self.language = language
 
-        # Параметры записи
-        self.sample_rate = 16000
-        self.channels = 1
-        self.chunk = 1024
+        self.sample_rate = config.SAMPLE_RATE
+        self.channels = config.CHANNELS
+        self.chunk = config.CHUNK
         self.format = pyaudio.paInt16
 
-        # Порог тишины для автостопа
-        self.silence_threshold = 500   # амплитуда
-        self.silence_duration = 1.5    # секунд тишины = стоп
-        self.max_record_sec = 15       # максимум записи
+        self.silence_threshold = config.MIN_SILENCE_THRESHOLD
+        self.max_record_sec = config.MAX_RECORD_SEC
 
         self.pa = pyaudio.PyAudio()
 
@@ -41,30 +41,20 @@ class SpeechRecognizer:
         chunks_needed = int(self.sample_rate / self.chunk * duration)
         for _ in range(chunks_needed):
             data = stream.read(self.chunk, exception_on_overflow=False)
-            level = self._rms(data)
-            levels.append(level)
+            levels.append(self._rms(data))
         stream.stop_stream()
         stream.close()
 
         avg_noise = sum(levels) / len(levels) if levels else 300
-        self.silence_threshold = int(avg_noise * 1.8)
-        if self.silence_threshold < 300:
-            self.silence_threshold = 300
+        self.silence_threshold = max(int(avg_noise * 1.8), config.MIN_SILENCE_THRESHOLD)
         print(f"[Mic] Порог тишины: {self.silence_threshold}")
 
-    def _rms(self, data):
-        """Среднеквадратичная амплитуда."""
-        import struct
-        count = len(data) // 2
-        shorts = struct.unpack(f"{count}h", data)
-        sum_sq = sum(s * s for s in shorts)
-        return int((sum_sq / count) ** 0.5) if count > 0 else 0
-
-    def listen(self, timeout=10, phrase_time_limit=15):
+    def listen(self, timeout=None, phrase_time_limit=None):
         """
-        Слушает микрофон, записывает до тишины, отправляет в Whisper.
+        Слушает микрофон с адаптивным определением конца фразы.
         Возвращает текст или None.
         """
+        timeout = timeout or config.LISTEN_TIMEOUT
         stream = self.pa.open(
             format=self.format, channels=self.channels,
             rate=self.sample_rate, input=True,
@@ -74,9 +64,9 @@ class SpeechRecognizer:
         frames = []
         silent_chunks = 0
         has_speech = False
+        speech_chunks = 0
         max_chunks = int(self.sample_rate / self.chunk * self.max_record_sec)
         timeout_chunks = int(self.sample_rate / self.chunk * timeout)
-        silence_limit = int(self.sample_rate / self.chunk * self.silence_duration)
         waited = 0
 
         print("[Mic] Слушаю...")
@@ -89,6 +79,7 @@ class SpeechRecognizer:
                 if level > self.silence_threshold:
                     has_speech = True
                     frames.append(data)
+                    speech_chunks = 1
                     break
                 waited += 1
 
@@ -98,17 +89,21 @@ class SpeechRecognizer:
                 stream.close()
                 return None
 
-            # Фаза 2: пишем до тишины
+            # Фаза 2: запись с адаптивным порогом тишины
             for _ in range(max_chunks):
                 data = stream.read(self.chunk, exception_on_overflow=False)
                 frames.append(data)
                 level = self._rms(data)
-                if level < self.silence_threshold:
+
+                if level >= self.silence_threshold:
+                    silent_chunks = 0
+                    speech_chunks += 1
+                else:
                     silent_chunks += 1
+                    # Адаптивный порог тишины
+                    silence_limit = self._adaptive_silence_limit(speech_chunks)
                     if silent_chunks >= silence_limit:
                         break
-                else:
-                    silent_chunks = 0
 
         finally:
             stream.stop_stream()
@@ -117,7 +112,10 @@ class SpeechRecognizer:
         if not frames:
             return None
 
-        # Сохраняем WAV во временный файл
+        speech_duration = speech_chunks * self.chunk / self.sample_rate
+        print(f"[Mic] Записано {speech_duration:.1f} сек")
+
+        # Сохраняем WAV
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             tmp_path = f.name
             wf = wave.open(f, "wb")
@@ -127,27 +125,62 @@ class SpeechRecognizer:
             wf.writeframes(b"".join(frames))
             wf.close()
 
-        # Отправляем в Whisper
-        try:
-            with open(tmp_path, "rb") as audio_file:
-                result = self.client.audio.transcriptions.create(
-                    model="whisper-1",
-                    file=audio_file,
-                    language=self.language,
-                )
-            text = result.text.strip()
-            if text:
-                print(f"[Mic] Распознано: {text}")
-                return text
-            return None
-        except Exception as e:
-            print(f"[Mic] Ошибка Whisper: {e}")
-            return None
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
+        # Отправляем в Whisper с retry
+        return self._transcribe_with_retry(tmp_path)
 
     def close(self):
         self.pa.terminate()
+
+    # === Внутренние методы ===
+
+    def _adaptive_silence_limit(self, speech_chunks):
+        """Адаптивный порог тишины в chunks."""
+        speech_sec = speech_chunks * self.chunk / self.sample_rate
+
+        if speech_sec < 3.0:
+            silence_sec = config.SILENCE_SHORT_PHRASE
+        elif speech_sec > 5.0:
+            silence_sec = config.SILENCE_LONG_PHRASE
+        else:
+            silence_sec = config.SILENCE_DURATION
+
+        return int(self.sample_rate / self.chunk * silence_sec)
+
+    def _transcribe_with_retry(self, audio_path, max_retries=2):
+        """Транскрибация через Whisper API с retry."""
+        for attempt in range(max_retries):
+            try:
+                with open(audio_path, "rb") as audio_file:
+                    result = self.client.audio.transcriptions.create(
+                        model=config.WHISPER_MODEL,
+                        file=audio_file,
+                        language=self.language,
+                    )
+                text = result.text.strip()
+                if text:
+                    print(f"[Mic] Распознано: {text}")
+                    return text
+                return None
+            except Exception as e:
+                print(f"[Mic] Ошибка Whisper (попытка {attempt + 1}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(1)
+            finally:
+                if attempt == max_retries - 1:
+                    try:
+                        os.unlink(audio_path)
+                    except Exception:
+                        pass
+
+        print("[Mic] Whisper не отвечает")
+        return None
+
+    @staticmethod
+    def _rms(data):
+        """Среднеквадратичная амплитуда."""
+        count = len(data) // 2
+        if count == 0:
+            return 0
+        shorts = struct.unpack(f"{count}h", data)
+        sum_sq = sum(s * s for s in shorts)
+        return int((sum_sq / count) ** 0.5)
