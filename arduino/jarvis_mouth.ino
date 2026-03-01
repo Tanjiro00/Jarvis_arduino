@@ -374,7 +374,10 @@ void setup() {
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
 
-  showSleep();
+  // Сразу включаемся с boot-анимацией (не ждём датчик)
+  bootAnimation();
+  wakeSent = true;
+  sleepSent = false;
   lastFarTime = millis();
 }
 
