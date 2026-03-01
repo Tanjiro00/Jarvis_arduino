@@ -1,54 +1,79 @@
-"""Модуль синтеза речи (Text-to-Speech)."""
+"""Модуль синтеза речи — OpenAI TTS (качественный голос)."""
 
-import pyttsx3
+import io
+import os
+import tempfile
+import threading
+
+from openai import OpenAI
+
+# pygame для воспроизведения аудио — легче и надёжнее чем pyttsx3
+import pygame
 
 
 class TextToSpeech:
-    """Озвучивание текста через pyttsx3 с callback'ами для анимации."""
+    """Озвучка через OpenAI TTS API — живой человеческий голос."""
 
-    def __init__(self, rate=150, volume=1.0):
-        self.engine = pyttsx3.init()
-        self.engine.setProperty("rate", rate)
-        self.engine.setProperty("volume", volume)
+    def __init__(self, voice="onyx", api_key=None):
+        """
+        voice: "onyx" (низкий мужской), "alloy", "echo", "fable", "nova", "shimmer"
+        """
+        self.client = OpenAI(api_key=api_key or os.environ.get("OPENAI_API_KEY"))
+        self.voice = voice
         self._on_start = None
         self._on_end = None
 
-        # Попробовать выбрать русский голос
-        voices = self.engine.getProperty("voices")
-        for voice in voices:
-            if "ru" in voice.id.lower() or "russian" in voice.name.lower():
-                self.engine.setProperty("voice", voice.id)
-                print(f"[TTS] Голос: {voice.name}")
-                break
-
-        # Регистрация callback'ов движка
-        self.engine.connect("started-utterance", self._handle_start)
-        self.engine.connect("finished-utterance", self._handle_end)
+        # Инициализация pygame mixer
+        pygame.mixer.init(frequency=24000, size=-16, channels=1)
 
     def on_start(self, callback):
-        """Callback при начале произнесения."""
         self._on_start = callback
 
     def on_end(self, callback):
-        """Callback при окончании произнесения."""
         self._on_end = callback
 
-    def _handle_start(self, name):
-        if self._on_start:
-            self._on_start()
-
-    def _handle_end(self, name, completed):
-        if self._on_end:
-            self._on_end()
-
     def speak(self, text):
-        """Произнести текст. Блокирующий вызов."""
-        print(f"[TTS] Говорю: {text}")
-        self.engine.say(text)
-        self.engine.runAndWait()
+        """Озвучить текст. Блокирующий вызов."""
+        if not text:
+            return
 
-    def list_voices(self):
-        """Показать все доступные голоса."""
-        voices = self.engine.getProperty("voices")
-        for v in voices:
-            print(f"  {v.id} — {v.name} [{','.join(v.languages)}]")
+        print(f"[TTS] Генерирую речь...")
+
+        try:
+            response = self.client.audio.speech.create(
+                model="tts-1",
+                voice=self.voice,
+                input=text,
+                response_format="mp3",
+            )
+
+            # Сохраняем во временный файл
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+                f.write(response.content)
+                tmp_path = f.name
+
+            # Воспроизводим
+            if self._on_start:
+                self._on_start()
+
+            pygame.mixer.music.load(tmp_path)
+            pygame.mixer.music.play()
+
+            # Ждём окончания
+            while pygame.mixer.music.get_busy():
+                pygame.time.wait(50)
+
+            if self._on_end:
+                self._on_end()
+
+            # Удаляем временный файл
+            try:
+                pygame.mixer.music.unload()
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
+        except Exception as e:
+            print(f"[TTS] Ошибка: {e}")
+            if self._on_end:
+                self._on_end()

@@ -1,10 +1,10 @@
 """
-Джарвис — ИИ-ассистент.
+ЖОПА — Жутко Оптимизированный Персональный Ассистент.
 
 Режимы:
-  python main.py              — текстовый режим (сервер, без микрофона)
-  python main.py --voice      — голосовой режим (ПК с микрофоном и динамиком)
-  python main.py --voice COM9 — голосовой + Arduino на порту
+  python main.py              — текстовый (без микрофона)
+  python main.py --voice      — голосовой (без Arduino)
+  python main.py --voice COM9 — голосовой + Arduino LCD
 
 Переменная окружения: OPENAI_API_KEY
 """
@@ -16,9 +16,10 @@ from ai import JarvisAI
 
 
 def run_text_mode():
-    """Текстовый режим — для тестирования на сервере."""
+    """Текстовый режим."""
     print("=" * 50)
-    print("  J.O.P.A. — ИИ-ассистент (текстовый режим)")
+    print("  ЖОПА — текстовый режим")
+    print("  Жутко Оптимизированный Персональный Ассистент")
     print("=" * 50)
     print("  Пиши сообщения. 'выход' — завершить.\n")
 
@@ -34,21 +35,22 @@ def run_text_mode():
             continue
 
         if text.lower() in ("выход", "exit", "quit", "стоп"):
-            print("\n[JOPA] До свидания!")
+            print("\n[ЖОПА] Пока!")
             break
 
         answer = ai.ask(text)
-        print(f"\nJOPA: {answer}\n")
+        print(f"\nЖОПА: {answer}\n")
 
 
 def run_voice_mode(port=None):
-    """Голосовой режим — ПК с микрофоном/динамиком и опционально Arduino."""
+    """Голосовой режим."""
     from serial_comm import ArduinoSerial
     from speech import SpeechRecognizer
     from tts import TextToSpeech
 
     print("=" * 50)
-    print("  J.O.P.A. — ИИ-ассистент (голосовой режим)")
+    print("  ЖОПА — голосовой режим")
+    print("  Жутко Оптимизированный Персональный Ассистент")
     print("=" * 50)
 
     # --- Инициализация ---
@@ -57,77 +59,72 @@ def run_voice_mode(port=None):
         print("\n[!] Arduino не подключена — работаю без дисплея.")
         print("    Укажи порт: python main.py --voice COM9\n")
 
-    recognizer = SpeechRecognizer(language="ru-RU")
+    recognizer = SpeechRecognizer(language="ru")
     ai = JarvisAI()
-    tts = TextToSpeech()
+    tts = TextToSpeech(voice="onyx")  # низкий мужской голос
 
-    # TTS callback для анимации рта
+    # Анимация рта привязана к TTS
     if arduino.connected:
         tts.on_start(lambda: arduino.start_talking_animation())
         tts.on_end(lambda: arduino.stop_animation())
 
-    # --- Калибровка микрофона ---
+    # Калибровка
     recognizer.calibrate(duration=1)
 
-    # --- Приветствие ---
-    print("\n[JOPA] Система готова. Говори!\n")
+    # Приветствие
+    print("\n[ЖОПА] Система запущена!\n")
     if arduino.connected:
-        time.sleep(0.5)
-        arduino.start_talking_animation()
-    tts.speak("JOPA онлайн. Чем могу помочь?")
-    if arduino.connected:
-        arduino.stop_animation()
+        time.sleep(3)  # ждём boot-анимацию Arduino
+    tts.speak("ЖОПА онлайн. Слушаю.")
 
     # --- Главный цикл ---
     try:
         while True:
-            # Слушаю
+            # Анимация слушания
             if arduino.connected:
                 arduino.start_listening_animation()
 
-            text = recognizer.listen(timeout=10, phrase_time_limit=15)
+            # Записать и распознать речь
+            text = recognizer.listen(timeout=8, phrase_time_limit=15)
 
             if text is None:
                 if arduino.connected:
                     arduino.mouth_closed()
                 continue
 
-            print(f"[Ты]: {text}")
+            print(f"\n[Ты] {text}")
 
-            # Команда выхода
+            # Выход
             lower = text.lower()
-            if any(cmd in lower for cmd in ["выключись", "пока", "до свидания", "стоп"]):
+            if any(cmd in lower for cmd in ["выключись", "пока", "до свидания", "выход"]):
+                tts.speak("Пока! Если что — я тут.")
                 if arduino.connected:
-                    arduino.start_talking_animation()
-                tts.speak("До свидания!")
-                if arduino.connected:
-                    arduino.stop_animation()
                     arduino.sleep_mode()
                 break
 
-            # Получить ответ AI
+            # Думаем
             if arduino.connected:
                 arduino.mouth_closed()
 
+            # Ответ AI
             answer = ai.ask(text)
 
-            # Озвучить (анимация через TTS callback)
-            if arduino.connected:
-                arduino.start_talking_animation()
+            # Озвучка (анимация через callback)
             tts.speak(answer)
+
             if arduino.connected:
-                arduino.stop_animation()
                 arduino.mouth_closed()
 
     except KeyboardInterrupt:
-        print("\n\n[JOPA] Выключаюсь...")
+        print("\n\n[ЖОПА] Выключаюсь...")
     finally:
         if arduino.connected:
             arduino.stop_animation()
             arduino.sleep_mode()
             time.sleep(0.3)
             arduino.close()
-        print("[JOPA] До свидания!")
+        recognizer.close()
+        print("[ЖОПА] Пока!")
 
 
 def main():
